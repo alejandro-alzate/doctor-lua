@@ -43,7 +43,9 @@ local keywords = {
 local handlers = {}
 local documentationStack = {
 	current = {
-		line = 1
+		line = 1,
+		length = 0,
+		lineCount = 0
 	},
 	temporal = {
 		func = {},
@@ -280,33 +282,60 @@ local function forceFlush()
 		documentationStack.temporal.func = {}
 	end
 
-	--Flush any temporal module
-	if documentationStack.temporal.module.name then
-		documentationStack.temporal.module.funcs = documentationStack.funcs
-		documentationStack.funcs = {}
-
+	--Flush any temporal module or create a dumb one
+	if not documentationStack.temporal.module.name then
+		documentationStack.temporal.module.description = ""
+		documentationStack.temporal.module.copyright = ""
+		documentationStack.temporal.module.author = ""
+		documentationStack.temporal.module.summary = ""
+		documentationStack.temporal.module.release = ""
+		documentationStack.temporal.module.url = ""
+		documentationStack.temporal.module.library = ""
+		documentationStack.temporal.module.name = ""
 	end
+	--Insert functions then clear functions table
+	documentationStack.temporal.module.funcs = documentationStack.funcs
+	documentationStack.temporal.module.metadata = {
+		file = {
+			length = documentationStack.current.length,
+			lineCount = documentationStack.current.lineCount
+		}
+	}
+	documentationStack.funcs = {}
+	--Insert module then clear temporal module
+	table.insert(documentationStack.modules, documentationStack.temporal.module)
+	documentationStack.temporal.module = {}
 end
 
 --[[--
 	@function doctor.processString
+	@scope public
 	@summary Ingests a string for processing
 	@parameter inputText string *The string to get processed
 	@description |
 	Receives a string on [inputText] and process it to create a structure
 	Based on the special comments scattered on the file.
-	@scope public
+	This function is exposed to the user but is recommended to use {generateDocument}
+	instead.
+	@return module table *The processed string from [inputText] as an parsed table
 ]]
 function doctor.processString(inputText)
 	local text = inputText or ""
+	local length = text:len()
 	local textArray = totable(text.."\n")
+	local lineCount = #textArray
 	local onComment = false
 	local singleLineComment = true
 	local keyword, isMultine = false, false
 	local rawKeyword = ""
 
+	documentationStack.current = {}
+	documentationStack.current.length = length
+	documentationStack.current.lineCount = lineCount
+
 	-- print("keywd", "mulln", "k", "m", "index")
 	for i,v in ipairs(textArray) do
+		documentationStack.current.line = i
 		if isBlockCommentTrigger(v) then onComment = true;singleLineComment = false;end
 		if isSingleLineCommentTrigger(v) and (not onComment) then onComment = true;singleLineComment = true;end
 
@@ -343,6 +372,17 @@ function doctor.processString(inputText)
 	forceFlush()
 
 	print(json.encode(documentationStack))
+	return documentationStack.modules
+end
+
+--[[--
+	@function doctor.generateDocument
+	@scope public
+	@parameter inputPath string *The file path to read from
+	@summary Generate a document
+]]
+function doctor.generateDocument(inputPath)
+	documentationStack.current = {filename = inputPath}
 end
 
 
