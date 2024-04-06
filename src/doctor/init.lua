@@ -1,4 +1,18 @@
+--[[--
+	@module doctor-lua
+	@release 0.0.0
+	@author Alejandro Alzate Sánchez
+	@copyright Copyright ©2024 alejandro-alzate
+	@summary House-grown documentation tool for lua.
+	@description |
+	# Doctor.lua
+	Create simple documents for your lua projects
+	@url https://github.com/alejandro-alzate/doctor-lua
+	@license $licenses.mit
+	@library doctor-lua
+]]
 local doctor = {}
+local json = require("json")
 local totable = require("string-to-table")
 local readfile = require("read-file")
 local triggers = {
@@ -13,14 +27,15 @@ local keywords = {
 	author			= {"@author"							},
 	method			= {"@method"							},
 	module			= {"@module",		"@mod"				},
-	["return"]		= {"@return",		"@ret"				},
+	ret				= {"@return",		"@ret"				},
+	example			= {"@example",		"@exa",	"@eg"		},
 	declare			= {"@declare",		"@decl"				},
 	library			= {"@library",		"@lib"				},
 	release			= {"@release",		"@rel"				},
 	version			= {"@version",		"@ver"				},
 	summary			= {"@summary",		"@sum"				},
 	argument		= {"@argument",		"@arg"				},
-	["function"]	= {"@function",		"@func", "@fun"		},
+	func			= {"@function",		"@func", "@fun"		},
 	copyright		= {"@copyright",	"@copy"				},
 	parameter		= {"@parameter",	"@param"			},
 	description		= {"@description",	"@desc"				},
@@ -37,6 +52,7 @@ local documentationStack = {
 	funcs = {},
 	modules = {},
 }
+local lastKeywordFlushTrigger = false
 
 --[[--
 	@function getLineType
@@ -152,33 +168,76 @@ local function isBlockCommentFinish(inputText)
 end
 
 --[[--
+	@function updateParameters
+	@summary inserts new parameters and updates old ones
+	@parameter inputKeyword string *Determines the behavior
+	@parameter inputValue string *Determines the data to store
+	@parameter funcKeyword string *Especial keyword case
+	@parameter modKeyword string *Especial keyword case
+	@scope internal
+	@description |
+	Looks for where to input certain fields and updates (concatenates) existing ones
+]]
+local function updateParameters(inputKeyword, inputValue, funcKeyword, modKeyword)
+	--Clean the input
+	if inputValue:sub(inputValue:len(), inputValue:len()) == "|" then
+		inputValue = inputValue:sub(1, inputValue:len() - 1)
+	end
+	if inputValue:sub(1,1) == "\t" then
+		inputValue = inputValue:sub(2, inputValue:len())
+	end
+
+	--Insert the input
+	if lastKeywordFlushTrigger == funcKeyword and (inputKeyword ~= funcKeyword) then
+		--print("current function."..inputKeyword)
+		--print(documentationStack.temporal.func[inputKeyword])
+		documentationStack.temporal.func[inputKeyword] = (documentationStack.temporal.func[inputKeyword] or "").. " " .. inputValue
+	elseif lastKeywordFlushTrigger == modKeyword and (inputKeyword ~= modKeyword) then
+		--print("current module."..inputKeyword)
+		--print(documentationStack.temporal.module[inputKeyword])
+		documentationStack.temporal.module[inputKeyword] = (documentationStack.temporal.module[inputKeyword] or "").. " " .. inputValue
+	end
+end
+
+--[[--
 	@function keywordPush
 	@summary Handles the presence of keywords in the string
 	@parameter inputKeyword string *Determines the behavior
 	@parameter inputValue string *Determines the data to store
+	@scope internal
 	@description |
 	This function has different behaviors based in [inputKeyword]
 	When [inputKeyword] is a function flushes all other parameters and starts
 	clean this is why is so important to declare function at the start of
 	the comment since it flags a push operation, same behavior with module
 	but it pushes all declared functions as well.
-	@scope internal
 ]]
-local lastKeywordFlushTrigger = false
 local function keywordPush(inputKeyword, inputValue)
-	print("keyword push:", inputKeyword:sub(1,6), inputValue)
+	local funcKeyword = "func"
+	local funcListeners = {
+		"parameter", "summary", "description", "usage",
+		"ret", "scope", "example",
+	}
+
+	local modKeyword = "module"
+	local modListeners = {
+		"release", "author", "copyright", "url", "usage",
+		"version",
+	}
+
+	--print("keyword push:", inputKeyword:sub(1,6), inputValue:sub(1, 80))
 
 	--Flush & Push operations:
-	if inputKeyword == "function" then
-		lastKeywordFlushTrigger = "function"
+	if inputKeyword == funcKeyword then
+		lastKeywordFlushTrigger = funcKeyword
 		if documentationStack.temporal.func.name then
-			print("flushing last function", documentationStack.temporal.func.name)
+			--print("flushing last function", documentationStack.temporal.func.name)
 			table.insert(documentationStack.funcs, documentationStack.temporal.func)
 			documentationStack.temporal.func = {}
-			print("and creating a new one", inputValue)
-			documentationStack.temporal.name = inputValue
+			--print("and creating a new one", inputValue)
+			documentationStack.temporal.func.name = inputValue
 		else
-			print("first function declared!!", inputValue:gsub("%s", ""))
+			--print("first function declared!!", inputValue:gsub("%s", ""))
 			local name, _ = inputValue:gsub("%s", "")
 			documentationStack.temporal.func["name"] = name
 		end
@@ -186,12 +245,15 @@ local function keywordPush(inputKeyword, inputValue)
 		lastKeywordFlushTrigger = "module"
 		if documentationStack.temporal.module.name then
 			documentationStack.modules.funcs = documentationStack.funcs
+			if documentationStack.temporal.func.name then
+				table.insert(documentationStack.modules.funcs, documentationStack.temporal.func)
+			end
 			documentationStack.funcs = {}
 			table.insert(documentationStack.modules, documentationStack.temporal.module)
 			documentationStack.temporal.module = {}
 			documentationStack.temporal.module.funcs = {}
 		else
-			print("first module declared!!", inputValue)
+			--print("first module declared!!", inputValue)
 			documentationStack.temporal.module.name = inputValue
 		end
 	end
@@ -199,9 +261,30 @@ local function keywordPush(inputKeyword, inputValue)
 	--Based in the latest flush operation
 	--Change the behavior accordingly to listen to only
 	--relevant keywords
-	if lastKeywordFlushTrigger == "function" then
-		if inputKeyword == "" then
-		end
+	updateParameters(inputKeyword, inputValue, funcKeyword, modKeyword)
+end
+
+
+--[[--
+	@function forceFlush
+	@scope internal
+	@summary flushes any temporal data
+	@description |
+	Searches for any temporal stored data and flushes immediately
+	said cached data for further use, this is done automatically internally.
+]]
+local function forceFlush()
+	--Flush any temporal declared function to the the functions table
+	if documentationStack.temporal.func.name then
+		table.insert(documentationStack.funcs, documentationStack.temporal.func)
+		documentationStack.temporal.func = {}
+	end
+
+	--Flush any temporal module
+	if documentationStack.temporal.module.name then
+		documentationStack.temporal.module.funcs = documentationStack.funcs
+		documentationStack.funcs = {}
+
 	end
 end
 
@@ -257,6 +340,9 @@ function doctor.processString(inputText)
 			keywordPush(keyword, v:gsub("%@%w+% ", ""))
 		end
 	end
+	forceFlush()
+
+	print(json.encode(documentationStack))
 end
 
 
